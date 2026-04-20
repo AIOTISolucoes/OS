@@ -10,8 +10,6 @@ const COLUMNS = [
 ]
 
 const COLUMN_STATUSES = new Set(COLUMNS.map((item) => item.status))
-const DETAIL_CARD_OPEN_STATUSES = new Set(["em_processo", "em_verificacao", "concluida"])
-
 const STATUS_LABELS = {
   pendente: "Tarefa pendente",
   em_processo: "Em processo",
@@ -68,6 +66,7 @@ const KB = {
   _statusTarget: null,
   workOrdersByStatus: {},
   workOrderCache: new Map(),
+  detailRequestSeq: 0,
   drag: {
     id: null,
     fromStatus: null,
@@ -441,7 +440,7 @@ function clearDropTargets() {
 }
 
 function canOpenDetailFromCard(workOrder) {
-  return DETAIL_CARD_OPEN_STATUSES.has(workOrder?.status || "")
+  return !!getWorkOrderId(workOrder)
 }
 
 // =============================================================================
@@ -538,19 +537,32 @@ function bindDetailDrawer() {
 async function openDetail(workOrder) {
   if (!workOrder) return
 
-  KB.currentOs = normalizeWorkOrderDetail(workOrder)
-  KB.currentOsDetail = normalizeWorkOrderDetail(workOrder)
+  const normalizedWorkOrder = normalizeWorkOrderDetail(workOrder)
+  const workOrderId = getWorkOrderId(normalizedWorkOrder)
+  const requestSeq = ++KB.detailRequestSeq
+
+  KB.currentOs = normalizedWorkOrder
+  KB.currentOsDetail = normalizedWorkOrder
+  cacheWorkOrder(normalizedWorkOrder)
 
   document.getElementById("osDetailOverlay")?.classList.remove("hidden")
   document.getElementById("osDetailDrawer")?.classList.remove("hidden")
-  renderOsDetailLoading(KB.currentOsDetail)
+
+  if (workOrderId) renderOsDetail(KB.currentOsDetail)
+  else renderOsDetailLoading(KB.currentOsDetail)
 
   try {
-    const detail = await fetchWorkOrderDetail(getWorkOrderId(workOrder), workOrder)
-    KB.currentOsDetail = normalizeWorkOrderDetail(detail || workOrder)
+    const detail = await fetchWorkOrderDetail(workOrderId, normalizedWorkOrder)
+    if (requestSeq !== KB.detailRequestSeq) return
+
+    const normalizedDetail = normalizeWorkOrderDetail(detail || normalizedWorkOrder)
+    if (getWorkOrderId(normalizedDetail) !== getWorkOrderId(KB.currentOsDetail)) return
+
+    KB.currentOsDetail = normalizedDetail
     cacheWorkOrder(KB.currentOsDetail)
     renderOsDetail(KB.currentOsDetail)
   } catch (error) {
+    if (requestSeq !== KB.detailRequestSeq) return
     console.warn("[OS] detail fallback", error)
     renderOsDetail(KB.currentOsDetail)
   }
@@ -558,6 +570,7 @@ async function openDetail(workOrder) {
 
 function closeDetail() {
   closeTaskModal()
+  KB.detailRequestSeq += 1
   document.getElementById("osDetailOverlay")?.classList.add("hidden")
   document.getElementById("osDetailDrawer")?.classList.add("hidden")
   document.getElementById("osdBody").innerHTML = ""
