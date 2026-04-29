@@ -11,37 +11,49 @@
   <link rel="stylesheet" href="os.css" />
   <style>
   *{box-sizing:border-box;margin:0;padding:0;}
-  body{--bg-main:#030608;--bg-card:#070d0a;--bg-card-alt:#0a1410;--text-main:#e6f5ec;--text-muted:#6a8e7a;--accent:#2aff7b;--border-soft:rgba(255,255,255,.07);--accent-soft:rgba(42,255,123,.08);--col-bg:rgba(7,14,10,.85);--col-border:rgba(42,255,123,.12);font-family:"Roboto",sans-serif;background:var(--bg-main);color:var(--text-main);overflow-x:hidden;
-    background-image:radial-gradient(800px 500px at 15% 5%,rgba(42,255,123,.04),transparent 60%),radial-gradient(600px 400px at 80% 90%,rgba(42,255,123,.03),transparent 60%);background-attachment:fixed;}
+  body{
+    --accent:#4DB848;--accent-dim:rgba(77,184,72,.15);--accent-glow:rgba(77,184,72,.35);
+    --bg-main:#080c09;--bg-card:#0d1410;--bg-card-alt:#111a12;--bg-glass:rgba(13,20,16,.85);
+    --text-main:#e8f5e9;--text-muted:#557a5c;
+    --border-soft:rgba(77,184,72,.08);--border-mid:rgba(77,184,72,.18);
+    --accent-soft:rgba(77,184,72,.12);
+    --col-bg:rgba(13,20,16,.7);--col-border:rgba(77,184,72,.12);
+    --shadow-card:0 2px 16px rgba(0,0,0,.35);--shadow-glow:0 0 24px rgba(77,184,72,.12);
+    font-family:"Roboto",sans-serif;background:var(--bg-main);color:var(--text-main);overflow-x:hidden;
+    background-image:radial-gradient(900px 600px at 10% 0%,rgba(77,184,72,.05),transparent 55%),radial-gradient(700px 500px at 85% 95%,rgba(77,184,72,.03),transparent 55%);
+    background-attachment:fixed;}
   .layout{display:grid;grid-template-columns:68px 1fr;min-height:100vh;}
   /* sidebar */
-  .os-sidebar{background:var(--bg-card);border-right:1px solid var(--border-soft);display:flex;flex-direction:column;align-items:center;padding:0 0 16px;height:100vh;position:sticky;top:0;z-index:100;width:68px;}
+  .os-sidebar{background:linear-gradient(180deg,#0a120b,#060d07);border-right:1px solid rgba(77,184,72,.12);box-shadow:2px 0 20px rgba(0,0,0,.4);display:flex;flex-direction:column;align-items:center;padding:0 0 16px;height:100vh;position:sticky;top:0;z-index:100;width:68px;}
   .os-sidebar-logo{width:68px;height:56px;display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border-soft);flex-shrink:0;}
   .os-sidebar-logo img{width:38px;height:38px;object-fit:contain;}
   .os-sidebar-logo-fallback{font-family:"Exo 2",sans-serif;font-size:10px;font-weight:800;color:var(--accent);letter-spacing:.1em;}
   .os-sidebar-nav{display:flex;flex-direction:column;align-items:center;gap:2px;width:100%;padding:10px 8px 0;}
-  .os-nav-item{width:52px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border-radius:10px;border:1px solid transparent;background:transparent;color:var(--text-muted);cursor:pointer;transition:.15s;text-decoration:none;}
+  .os-nav-item{width:52px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;border-radius:10px;border:1px solid transparent;background:transparent;color:var(--text-muted);cursor:pointer;transition:.15s;text-decoration:none;position:relative;overflow:hidden;}
+  .os-nav-item::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 0%,rgba(77,184,72,.08) 50%,transparent 100%);transform:translateX(-100%);transition:transform .3s;}
+  .os-nav-item:hover::after{transform:translateX(100%);}
   .os-nav-item svg{width:20px;height:20px;flex-shrink:0;transition:.15s;}
   .os-nav-item span{font-size:9px;font-family:"Exo 2",sans-serif;font-weight:700;letter-spacing:.04em;text-transform:uppercase;}
-  .os-nav-item:hover,.os-nav-item.active{background:var(--accent-soft);border-color:rgba(42,255,123,.35);color:var(--accent);}
+  .os-nav-item:hover,.os-nav-item.active{background:var(--accent-dim);border-color:rgba(77,184,72,.3);color:var(--accent);}
   .os-sidebar-bottom{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:8px;padding:0 8px;}
   .os-icon-btn{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-soft);background:var(--bg-card-alt);color:var(--text-muted);cursor:pointer;font-size:14px;transition:.15s;}
-  .os-icon-btn:hover{color:var(--accent);border-color:rgba(42,255,123,.4);}
+  .os-icon-btn:hover{color:var(--accent);border-color:rgba(77,184,72,.4);}
   /* topbar */
   .main{display:flex;flex-direction:column;min-width:0;}
-  .topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;border-bottom:1px solid var(--border-soft);background:var(--bg-card);gap:12px;}
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;border-bottom:1px solid rgba(77,184,72,.1);background:rgba(8,12,9,.92);backdrop-filter:blur(16px);box-shadow:0 1px 20px rgba(0,0,0,.3);gap:12px;position:sticky;top:0;z-index:50;}
   .topbar-left{display:flex;flex-direction:column;gap:1px;}
   .topbar-title{font-family:"Exo 2",sans-serif;font-size:15px;font-weight:700;letter-spacing:.04em;display:flex;align-items:center;gap:8px;}
   .topbar-sub{font-size:11px;color:var(--text-muted);letter-spacing:.06em;text-transform:uppercase;}
   .topbar-right{display:flex;align-items:center;gap:10px;}
-  .topbar-search{display:flex;align-items:center;gap:8px;background:var(--bg-card-alt);border:1px solid var(--border-soft);border-radius:8px;padding:6px 12px;min-width:200px;}
+  .topbar-search{display:flex;align-items:center;gap:8px;background:var(--bg-card-alt);border:1px solid var(--border-soft);border-radius:8px;padding:6px 12px;min-width:200px;transition:border-color .15s;}
+  .topbar-search:focus-within{border-color:var(--border-mid);}
   .topbar-search input{background:none;border:none;outline:none;color:var(--text-main);font-size:13px;width:100%;}
   .topbar-search input::placeholder{color:var(--text-muted);}
   .topbar-search i{color:var(--text-muted);font-size:13px;}
   .icon-btn{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border-soft);background:var(--bg-card-alt);color:var(--text-muted);cursor:pointer;font-size:14px;transition:.15s;}
-  .icon-btn:hover{color:var(--accent);border-color:rgba(42,255,123,.4);}
+  .icon-btn:hover{color:var(--accent);border-color:var(--border-mid);}
   .user-pill{display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;border:1px solid var(--border-soft);background:var(--bg-card-alt);font-size:12px;}
-  .avatar{width:22px;height:22px;border-radius:50%;background:#112218;border:1px solid rgba(42,255,123,.3);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--accent);}
+  .avatar{width:22px;height:22px;border-radius:50%;background:#0d2018;border:1px solid rgba(77,184,72,.3);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--accent);}
   .hidden{display:none!important;}
   </style>
   <script src="js/app.js"></script>
@@ -117,6 +129,75 @@
       </div>
     </header>
 
+    <div class="os-kpi-grid" id="osKpiGrid">
+      <div class="os-kpi-card os-kpi-card--highlight">
+        <div class="os-kpi-icon"><i class="fa-solid fa-list-check"></i></div>
+        <div class="os-kpi-body">
+          <div class="os-kpi-label">Total de OS</div>
+          <div class="os-kpi-value" id="osKpiTotal">—</div>
+        </div>
+      </div>
+      <div class="os-kpi-card">
+        <div class="os-kpi-icon os-kpi-icon--yellow"><i class="fa-solid fa-clock"></i></div>
+        <div class="os-kpi-body">
+          <div class="os-kpi-label">Pendentes</div>
+          <div class="os-kpi-value" id="osKpiPendentes">—</div>
+        </div>
+      </div>
+      <div class="os-kpi-card">
+        <div class="os-kpi-icon os-kpi-icon--blue"><i class="fa-solid fa-gears"></i></div>
+        <div class="os-kpi-body">
+          <div class="os-kpi-label">Em Processo</div>
+          <div class="os-kpi-value" id="osKpiEmProcesso">—</div>
+        </div>
+      </div>
+      <div class="os-kpi-card">
+        <div class="os-kpi-icon os-kpi-icon--red"><i class="fa-solid fa-triangle-exclamation"></i></div>
+        <div class="os-kpi-body">
+          <div class="os-kpi-label">Atrasadas</div>
+          <div class="os-kpi-value" id="osKpiAtrasadas">—</div>
+        </div>
+      </div>
+      <div class="os-kpi-card">
+        <div class="os-kpi-icon os-kpi-icon--orange"><i class="fa-solid fa-circle-pause"></i></div>
+        <div class="os-kpi-body">
+          <div class="os-kpi-label">Paradas</div>
+          <div class="os-kpi-value" id="osKpiParadas">—</div>
+        </div>
+      </div>
+      <div class="os-kpi-card">
+        <div class="os-kpi-icon"><i class="fa-solid fa-circle-check"></i></div>
+        <div class="os-kpi-body">
+          <div class="os-kpi-label">Concluídas</div>
+          <div class="os-kpi-value" id="osKpiConcluidas">—</div>
+        </div>
+      </div>
+      <div class="os-kpi-card">
+        <div class="os-kpi-icon os-kpi-icon--purple"><i class="fa-solid fa-sack-dollar"></i></div>
+        <div class="os-kpi-body">
+          <div class="os-kpi-label">Custo Total</div>
+          <div class="os-kpi-value os-kpi-value--sm" id="osKpiCustoTotal">—</div>
+        </div>
+      </div>
+      <div class="os-kpi-card" title="Tempo médio entre falhas consecutivas">
+        <div class="os-kpi-icon os-kpi-icon--teal"><i class="fa-solid fa-wave-square"></i></div>
+        <div class="os-kpi-body">
+          <div class="os-kpi-label">MTBF</div>
+          <div class="os-kpi-value" id="osKpiMtbf">—</div>
+          <div class="os-kpi-sub">entre falhas</div>
+        </div>
+      </div>
+      <div class="os-kpi-card" title="Tempo médio de reparo">
+        <div class="os-kpi-icon os-kpi-icon--blue"><i class="fa-solid fa-wrench"></i></div>
+        <div class="os-kpi-body">
+          <div class="os-kpi-label">MTTR</div>
+          <div class="os-kpi-value" id="osKpiMttr">—</div>
+          <div class="os-kpi-sub">tempo de reparo</div>
+        </div>
+      </div>
+    </div>
+    <div class="os-category-breakdown" id="osCategoryBreakdown"></div>
+
     <div class="kb-board" id="kbBoard">
       <div class="kb-col" data-status="pendente">
         <div class="kb-col-header">
@@ -141,7 +222,7 @@
       </div>
       <div class="kb-col" data-status="concluida">
         <div class="kb-col-header">
-          <div class="kb-col-title-row"><span class="kb-col-dot" style="background:#2aff7b;box-shadow:0 0 6px rgba(42,255,123,.5);"></span><span class="kb-col-title">OSs Concluídas</span><span class="kb-col-count" id="count-concluida">0</span></div>
+          <div class="kb-col-title-row"><span class="kb-col-dot" style="background:#4DB848;box-shadow:0 0 6px rgba(77,184,72,.5);"></span><span class="kb-col-title">OSs Concluídas</span><span class="kb-col-count" id="count-concluida">0</span></div>
           <button class="kb-col-refresh" data-col="concluida"><i class="fa-solid fa-rotate-right"></i></button>
         </div>
         <div class="kb-col-body" id="col-concluida"><div class="kb-loading" id="loading-concluida"><span class="kb-spinner"></span></div></div>
@@ -153,9 +234,9 @@
 <!-- FAB -->
 <button class="kb-fab" id="kbFab" title="Nova Ordem de Serviço">
   <svg viewBox="0 0 60 60" fill="none" class="fab-hex">
-    <polygon points="30,2 56,16 56,44 30,58 4,44 4,16" fill="rgba(10,25,18,.95)" stroke="rgba(42,255,123,.7)" stroke-width="1.5"/>
-    <line x1="30" y1="20" x2="30" y2="40" stroke="#2aff7b" stroke-width="2.5" stroke-linecap="round"/>
-    <line x1="20" y1="30" x2="40" y2="30" stroke="#2aff7b" stroke-width="2.5" stroke-linecap="round"/>
+    <polygon points="30,2 56,16 56,44 30,58 4,44 4,16" fill="rgba(10,25,18,.95)" stroke="rgba(77,184,72,.7)" stroke-width="1.5"/>
+    <line x1="30" y1="20" x2="30" y2="40" stroke="#4DB848" stroke-width="2.5" stroke-linecap="round"/>
+    <line x1="20" y1="30" x2="40" y2="30" stroke="#4DB848" stroke-width="2.5" stroke-linecap="round"/>
   </svg>
   <div class="fab-ring"></div>
 </button>
@@ -414,6 +495,16 @@
         <div class="wz-subtasks-list" id="resourcesList">
           <div class="wz-subtasks-empty"><i class="fa-regular fa-toolbox"></i><span>Nenhum recurso adicionado</span></div>
         </div>
+        <div class="wz-field-group" style="margin-bottom:12px;">
+          <label class="wz-label">Anexos <span style="font-weight:400;opacity:.65;font-size:.82em;">(opcional)</span></label>
+          <div class="wz-attachments-drop">
+            <input type="file" id="wzAttachmentsInput" multiple accept=".jpg,.jpeg,.png,.webp,.pdf" style="display:none;" />
+            <button type="button" class="wz-attachment-add-btn" id="wzAttachmentAddBtn">
+              <i class="fa-solid fa-plus"></i> Adicionar arquivo
+            </button>
+            <div class="wz-attachment-list" id="wzAttachmentList"></div>
+          </div>
+        </div>
         <div class="wz-summary-box">
           <div class="wz-summary-title">Resumo da OS</div>
           <div class="wz-summary-grid" id="wzSummaryGrid"></div>
@@ -557,7 +648,7 @@
   <button class="sp-btn" data-status="pendente"><span class="sp-dot" style="background:#f59e0b;"></span>Tarefas pendentes</button>
   <button class="sp-btn" data-status="em_processo"><span class="sp-dot" style="background:#3b82f6;"></span>OSs em Processo</button>
   <button class="sp-btn" data-status="em_verificacao"><span class="sp-dot" style="background:#a855f7;"></span>OSs em Verificação</button>
-  <button class="sp-btn" data-status="concluida"><span class="sp-dot" style="background:#2aff7b;"></span>OSs Concluídas</button>
+  <button class="sp-btn" data-status="concluida"><span class="sp-dot" style="background:#4DB848;"></span>OSs Concluídas</button>
 </div>
 
 <div class="os-toast hidden" id="osToast" role="status" aria-live="polite">
