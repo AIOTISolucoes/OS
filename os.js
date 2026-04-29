@@ -76,7 +76,10 @@ const KB = {
   taskRegisterOpen: false,
   taskRegisterDraft: { duration: "", note: "" },
   pendingAttachment: null,
-  attachmentsLoading: false
+  attachmentsLoading: false,
+  wizardPendingAttachments: [],
+  opts: null,
+  classifications: null
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -93,6 +96,22 @@ document.addEventListener("DOMContentLoaded", () => {
   loadAllColumns()
   loadWizardOptions()
   KB._autoRefresh = setInterval(() => loadAllColumns({ silent: true }), 45000)
+
+  setInterval(() => {
+    document.querySelectorAll(".kb-card[data-status='em_processo'], .kb-card[data-status='em_verificacao']").forEach((card) => {
+      const id = card.dataset.id
+      const wo = KB.workOrderCache?.get(id)
+      if (!wo) return
+      const pct = getCardProgressValue(wo)
+      const fill = card.querySelector(".kb-progress-fill")
+      const pctEl = card.querySelector(".kb-progress-pct")
+      if (fill) fill.style.width = pct + "%"
+      if (pctEl) pctEl.textContent = pct + "%"
+      const elapsed = getElapsedSeconds(wo)
+      const clockEl = card.querySelector(".kb-elapsed")
+      if (clockEl) clockEl.textContent = formatElapsed(elapsed)
+    })
+  }, 30000)
 })
 
 // =============================================================================
@@ -116,6 +135,9 @@ async function loadWizardOptions() {
       apiJson("/os-options"),
       apiJson("/os-classifications"),
     ])
+
+    KB.opts = opts
+    KB.classifications = classifications
 
     populate("f-task-type", (opts.task_type || []).map((i) => i.name))
     populate("f-criticality", (opts.criticality || []).map((i) => i.name))
@@ -153,6 +175,18 @@ function initUser() {
       window.location = "index.html"
     }
   })
+}
+
+// =============================================================================
+// Access control
+// =============================================================================
+
+function getCurrentUser() {
+  return JSON.parse(localStorage.getItem("user") || "{}")
+}
+
+function isSuperuser() {
+  return getCurrentUser().is_superuser === true
 }
 
 // =============================================================================
@@ -226,6 +260,45 @@ function bindBoardDragAndDrop() {
 async function loadAllColumns({ silent = false } = {}) {
   const q = getBoardSearch()
   await Promise.all(COLUMNS.map((col) => loadColumn(col.status, { silent, q })))
+  loadWorkOrderSummary()
+}
+
+async function loadWorkOrderSummary() {
+  try {
+    const data = await apiJson("/work-orders/summary")
+    const s = data.by_status || {}
+    const p = data.planning || {}
+    const r = data.reliability || {}
+    const cats = data.categories || []
+
+    const set = (id, val) => {
+      const el = document.getElementById(id)
+      if (el) el.textContent = val ?? "—"
+    }
+
+    set("osKpiTotal",      s.total        ?? "—")
+    set("osKpiPendentes",  s.pendente     ?? "—")
+    set("osKpiEmProcesso", s.em_processo  ?? "—")
+    set("osKpiAtrasadas",  p.atrasadas    ?? "—")
+    set("osKpiParadas",    p.paradas      ?? "—")
+    set("osKpiConcluidas", s.concluida    ?? "—")
+    set("osKpiMtbf",       r.mtbf_hours != null ? r.mtbf_hours.toFixed(1) + "h" : "—")
+    set("osKpiMttr",       r.mttr_hours != null ? r.mttr_hours.toFixed(1) + "h" : "—")
+    set("osKpiCustoTotal", formatCurrencyBRL(p.custo_total || 0))
+
+    const breakdown = document.getElementById("osCategoryBreakdown")
+    if (breakdown) {
+      breakdown.innerHTML = cats.length ? cats.map((c) => `
+        <div class="os-category-chip">
+          <span class="os-cat-name">${esc(c.categoria)}</span>
+          <span class="os-cat-total">${c.total}</span>
+          <span class="os-cat-detail">${c.em_processo} em processo · ${c.paradas} paradas</span>
+        </div>
+      `).join("") : ""
+    }
+  } catch (e) {
+    console.warn("[summary]", e)
+  }
 }
 
 async function refreshColumns(statuses, { silent = true } = {}) {
@@ -284,49 +357,70 @@ function renderColumn(status, items) {
 
 function buildCard(workOrder) {
   const card = document.createElement("div")
-  const progress = getProgressValue(workOrder)
+  const progress = getCardProgressValue(workOrder)
   const status = workOrder.status || "pendente"
   const assignee = workOrder.responsavel_name || workOrder.assignee_name || workOrder.requested_by || "Sem responsavel"
   const scheduledDate = workOrder.scheduled_date || null
   const assetCode = workOrder.asset_code || workOrder.asset_location || ""
   const detailEnabled = canOpenDetailFromCard(workOrder)
 
+  const isAdmin = isSuperuser()
   card.className = "kb-card"
   card.style.setProperty("--card-accent", getStatusColor(status))
   card.dataset.id = String(getWorkOrderId(workOrder) || "")
   card.dataset.status = status
   card.dataset.detailEnabled = String(detailEnabled)
-  card.setAttribute("draggable", "true")
+  card.setAttribute("draggable", isAdmin ? "true" : "false")
+  if (!isAdmin) card.style.cursor = "default"
 
-  const badges = []
-  if (!scheduledDate) badges.push('<span class="kb-card-badge kb-card-badge--neutral">N\u00c3O PLANEJADO</span>')
-  if (status === "cancelada") badges.push('<span class="kb-card-badge kb-card-badge--cancelled">CANCELADO</span>')
+  const priorityLabel = workOrder.criticality || workOrder.criticality_name || ""
+  const priorityClass = {
+    "baixa": "kb-priority--low",
+    "media": "kb-priority--mid", "médio": "kb-priority--mid", "medio": "kb-priority--mid",
+    "alta": "kb-priority--high",
+    "critica": "kb-priority--crit", "crítica": "kb-priority--crit",
+    "muito alta": "kb-priority--crit", "muito_alta": "kb-priority--crit",
+  }[(priorityLabel || "").toLowerCase()] || "kb-priority--mid"
+  const categoryText = workOrder.classification_2_name || workOrder.classification_1_name || workOrder.task_type_name || ""
 
   card.innerHTML = `
-    <div class="kb-card-top">
-      <div class="kb-card-top-copy">
-        <button type="button" class="kb-card-link" data-open-detail>${esc(workOrder.os_number || workOrder.id || "-")}</button>
-        <div class="kb-card-creator">Criado por ${esc(workOrder.created_by || workOrder.requested_by || "---")}</div>
+    <div class="kb-card-stripe"></div>
+    <div class="kb-card-inner">
+      <div class="kb-card-row1">
+        <button type="button" class="kb-card-os-num" data-open-detail>OS #${esc(workOrder.os_number || workOrder.id || "?")}</button>
+        ${priorityLabel ? `<span class="kb-priority ${priorityClass}">${esc(priorityLabel)}</span>` : ""}
+        ${!scheduledDate ? `<span class="kb-badge-unplanned">N\u00e3o planejado</span>` : ""}
+        ${status === "cancelada" ? `<span class="kb-badge-cancelled">Cancelado</span>` : ""}
       </div>
-      <div class="kb-card-badges">${badges.join("")}</div>
-    </div>
-    <div class="kb-card-asset"><span class="kb-card-label">Ativo:</span><strong>${esc(workOrder.asset_name || "Ativo nao informado")}${assetCode ? ` { ${esc(assetCode)} }` : ""}</strong></div>
-    <div class="kb-card-task"><span class="kb-card-label">Tarefa:</span>${esc(workOrder.task_description || "Sem descricao")}</div>
-    <div class="kb-card-progress-row">
-      <div class="kb-progress-bar"><div class="kb-progress-fill" style="width:${progress}%"></div></div>
-      <div class="kb-progress-pct">${progress}%</div>
-    </div>
-    <div class="kb-card-meta-row">
+      <div class="kb-card-title">${esc(workOrder.task_description || workOrder.title || "Sem descri\u00e7\u00e3o")}</div>
+      <div class="kb-card-asset-row">
+        <i class="fa-solid fa-microchip"></i>
+        <span>${esc(workOrder.asset_name || "Ativo n\u00e3o informado")}${assetCode ? ` &middot; <code>${esc(assetCode)}</code>` : ""}</span>
+      </div>
+      ${categoryText ? `<div class="kb-card-category"><i class="fa-solid fa-tag"></i>${esc(categoryText)}</div>` : ""}
+      <div class="kb-card-progress">
+        <div class="kb-progress-track">
+          <div class="kb-progress-fill ${isOverdue(workOrder) ? "kb-progress-fill--overdue" : ""}" style="width:${progress}%"></div>
+        </div>
+        <span class="kb-progress-pct">${progress}%</span>
+      </div>
       <div class="kb-card-meta">
-        <div class="kb-meta-item"><i class="fa-regular fa-clock"></i>${esc(formatDurationCompact(workOrder.estimated_duration))}</div>
-        <div class="kb-meta-item ${isOverdue(workOrder) ? "overdue" : ""}"><i class="fa-regular fa-calendar"></i>${esc(scheduledDate ? fmtDate(scheduledDate) : "Sem data")}</div>
+        <span class="kb-meta-chip">
+          <i class="fa-regular fa-clock"></i>${esc(formatDurationCompact(workOrder.estimated_duration || workOrder.estimated_duration_minutes))}
+        </span>
+        <span class="kb-meta-chip ${isOverdue(workOrder) ? "kb-meta-chip--overdue" : ""}">
+          <i class="fa-regular fa-calendar"></i>${scheduledDate ? fmtDate(scheduledDate) : "Sem data"}
+        </span>
+        ${workOrder.status === "em_processo" ? `<span class="kb-meta-chip kb-meta-chip--elapsed kb-elapsed" data-wo-id="${esc(String(getWorkOrderId(workOrder)))}"><i class="fa-solid fa-stopwatch"></i>${formatElapsed(getElapsedSeconds(workOrder))}</span>` : ""}
       </div>
-    </div>
-    <div class="kb-card-bottom">
-      <div class="kb-assignee-av" title="${esc(assignee)}">${avatarInitials(assignee)}</div>
-      <div class="kb-card-actions">
-        <button type="button" class="kb-card-action-btn" data-action="share" title="Compartilhar"><i class="fa-solid fa-share-nodes"></i></button>
-        <button type="button" class="kb-card-action-btn" data-action="menu" title="Mudar status"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+      <div class="kb-card-footer">
+        <div class="kb-card-assignee">
+          <div class="kb-assignee-av" title="${esc(assignee)}">${avatarInitials(assignee)}</div>
+          <span class="kb-assignee-name">${esc((assignee || "").split(" ")[0])}</span>
+        </div>
+        <div class="kb-card-actions">
+          ${isAdmin ? `<button type="button" class="kb-card-action-btn" data-action="menu" title="Opções"><i class="fa-solid fa-ellipsis-vertical"></i></button>` : ""}
+        </div>
       </div>
     </div>
   `
@@ -381,6 +475,10 @@ async function shareWorkOrder(workOrder) {
 }
 
 function handleCardDragStart(event, workOrder, card) {
+  if (!isSuperuser()) {
+    event.preventDefault()
+    return
+  }
   const id = getWorkOrderId(workOrder)
   if (!id) {
     event.preventDefault()
@@ -419,6 +517,7 @@ async function handleColumnDrop(event) {
   const { id, fromStatus, workOrder } = KB.drag
   clearDropTargets()
 
+  if (!isSuperuser()) return
   if (!id || !targetStatus || !fromStatus || targetStatus === fromStatus) return
 
   await changeStatus(id, targetStatus, {
@@ -462,6 +561,7 @@ function bindStatusPopover() {
 }
 
 function openStatusPopover(anchor, workOrder) {
+  if (!isSuperuser()) return
   const popover = document.getElementById("statusPopover")
   if (!popover || !workOrder) return
 
@@ -505,6 +605,7 @@ async function changeStatus(id, status, { fromStatus, workOrder, reloadStatuses,
 
     showToast(successMessage || `Status atualizado para ${STATUS_LABELS[status] || status}`, "success")
     await refreshColumns(reloadStatuses || [fromStatus, status])
+    loadWorkOrderSummary()
 
     if (KB.currentOsDetail && getWorkOrderId(KB.currentOsDetail) === id) {
       await refreshCurrentWorkOrderDetail({ preserveTaskId: KB.currentTask?.id })
@@ -547,6 +648,12 @@ async function openDetail(workOrder) {
 
   document.getElementById("osDetailOverlay")?.classList.remove("hidden")
   document.getElementById("osDetailDrawer")?.classList.remove("hidden")
+
+  const isAdmin = isSuperuser()
+  const osdStatusBtn = document.getElementById("osdStatusBtn")
+  const osdSaveBtn = document.getElementById("osdSaveBtn")
+  if (osdStatusBtn) osdStatusBtn.style.display = isAdmin ? "" : "none"
+  if (osdSaveBtn) osdSaveBtn.style.display = isAdmin ? "" : "none"
 
   if (workOrderId) renderOsDetail(KB.currentOsDetail)
   else renderOsDetailLoading(KB.currentOsDetail)
@@ -626,7 +733,10 @@ function renderOsDetail(detail) {
           <div class="osd-progress-label">Progresso</div>
           <div class="osd-progress-numbers">
             <span class="osd-progress-value">${progress}%</span>
-            <span class="osd-progress-cost">Custo total: ${esc(formatCurrencyBRL(detail.total_cost || detail.cost_total || 0))}</span>
+            ${isSuperuser()
+              ? `<input id="osdTotalCost" class="osd-cost-input" type="number" min="0" step="0.01" value="${(detail.total_cost || detail.cost_total || 0).toFixed(2)}" placeholder="0,00" />`
+              : `<span class="osd-progress-cost">Custo total: ${esc(formatCurrencyBRL(detail.total_cost || detail.cost_total || 0))}</span>`
+            }
           </div>
         </div>
       </div>
@@ -654,6 +764,40 @@ function renderOsDetail(detail) {
     <section class="osd-section-card">
       <div class="osd-section-title">Observa\u00e7\u00e3o</div>
       <textarea id="osdObservation" class="osd-textarea" placeholder="Digite observa\u00e7\u00f5es da ordem de servi\u00e7o...">${esc(detail.observations || "")}</textarea>
+    </section>
+
+    <section class="osd-section-card">
+      <div class="osd-section-title">Classifica\u00e7\u00e3o</div>
+      <div class="osd-field-grid">
+        <div class="osd-field">
+          <label for="osdTaskType">Tipo de tarefa</label>
+          <select id="osdTaskType" class="osd-input">
+            <option value="">Selecionar...</option>
+            ${((KB.opts?.task_type || []).map((i) => i.name)).map((n) => `<option value="${esc(n)}"${detail.task_type === n ? " selected" : ""}>${esc(n)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="osd-field">
+          <label for="osdCriticality">Criticidade</label>
+          <select id="osdCriticality" class="osd-input">
+            <option value="">Selecionar...</option>
+            ${((KB.opts?.criticality || []).map((i) => i.name)).map((n) => `<option value="${esc(n)}"${detail.criticality === n ? " selected" : ""}>${esc(n)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="osd-field">
+          <label for="osdClassification1">Classifica\u00e7\u00e3o 1</label>
+          <select id="osdClassification1" class="osd-input">
+            <option value="">Selecionar...</option>
+            ${(((KB.classifications?.items || []).filter((i) => i.level === 1 || !i.level)).map((i) => i.name)).map((n) => `<option value="${esc(n)}"${detail.classification_1 === n ? " selected" : ""}>${esc(n)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="osd-field">
+          <label for="osdClassification2">Classifica\u00e7\u00e3o 2</label>
+          <select id="osdClassification2" class="osd-input">
+            <option value="">Selecionar...</option>
+            ${((KB.classifications?.items || []).filter((i) => i.level === 1 || !i.level).flatMap((i) => (i.children || []).map((c) => c.name))).map((n) => `<option value="${esc(n)}"${detail.classification_2 === n ? " selected" : ""}>${esc(n)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
     </section>
 
     <section class="osd-section-card">
@@ -730,6 +874,24 @@ async function saveCurrentWorkOrderDetail() {
   nextDetail.scheduled_date = readDatetimeLocalValue("osdScheduledDate")
   nextDetail.start_date = readDatetimeLocalValue("osdStartDate")
   nextDetail.end_date = readDatetimeLocalValue("osdEndDate")
+  const osdTaskType = document.getElementById("osdTaskType")?.value || ""
+  const osdCriticality = document.getElementById("osdCriticality")?.value || ""
+  const osdClassification1 = document.getElementById("osdClassification1")?.value || ""
+  const osdClassification2 = document.getElementById("osdClassification2")?.value || ""
+  if (osdTaskType) nextDetail.task_type = osdTaskType
+  if (osdCriticality) nextDetail.criticality = osdCriticality
+  nextDetail.classification_1 = osdClassification1
+  nextDetail.classification_2 = osdClassification2
+  const costInput = document.getElementById("osdTotalCost")
+  if (costInput && isSuperuser()) {
+    nextDetail.total_cost = parseFloat(costInput.value) || 0
+  }
+  if (nextDetail.tasks?.[0]) {
+    if (osdTaskType) nextDetail.tasks[0].task_type = osdTaskType
+    if (osdCriticality) nextDetail.tasks[0].criticality = osdCriticality
+    nextDetail.tasks[0].classification_1 = osdClassification1
+    nextDetail.tasks[0].classification_2 = osdClassification2
+  }
   syncPrimaryTaskToDetail(nextDetail)
 
   await persistWorkOrderDetail(nextDetail, "OS atualizada com sucesso")
@@ -1088,27 +1250,47 @@ function renderTaskAttachmentsPanel(task) {
 }
 
 function renderAttachmentItem(attachment) {
-  const iconClass = isImageAttachment(attachment) ? "fa-image" : "fa-file-pdf"
-  const thumb = attachment.thumbnail_url || attachment.preview_url || attachment.url || ""
+  const isImg = isImageAttachment(attachment)
+  const iconClass = isImg ? "fa-image" : "fa-file-pdf"
+  const thumb = attachment.thumbnail_url || (isImg ? attachment.download_url : "")
   const createdAt = attachment.created_at ? fmtDatetime(attachment.created_at) : "---"
+  const available = attachment.is_available && attachment.download_url
+  const thumbHtml = thumb
+    ? `<img src="${escAttr(thumb)}" alt="${escAttr(attachment.name)}" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />`
+    : `<i class="fa-solid ${iconClass}" style="font-size:22px;color:var(--text-muted);"></i>`
 
   return `
     <div class="task-attachment-item">
-      <a class="task-attachment-link" href="${escAttr(attachment.url || "#")}" ${attachment.url ? 'target="_blank" rel="noopener noreferrer"' : ""}>
-        <div class="task-attachment-thumb">
-          ${thumb && isImageAttachment(attachment) ? `<img src="${thumb}" alt="${escAttr(attachment.name)}" />` : `<i class="fa-solid ${iconClass}"></i>`}
-        </div>
-      </a>
+      <div class="task-attachment-preview" style="cursor:${isImg && available ? "zoom-in" : "default"};"
+        ${isImg && available ? `data-lightbox="${escAttr(attachment.download_url)}" data-lightbox-alt="${escAttr(attachment.name)}"` : ""}>
+        ${thumbHtml}
+      </div>
       <div class="task-attachment-copy">
-        <a class="task-attachment-link" href="${escAttr(attachment.url || "#")}" ${attachment.url ? 'target="_blank" rel="noopener noreferrer"' : ""}>
-          <div class="task-attachment-name">${esc(attachment.name || "Arquivo")}</div>
-        </a>
-        <div class="task-attachment-meta">${esc(attachment.note || "Sem nota")}</div>
+        <div class="task-attachment-name">${esc(attachment.name || "Arquivo")}</div>
+        ${attachment.note ? `<div class="task-attachment-meta">${esc(attachment.note)}</div>` : ""}
         <div class="task-attachment-meta">${esc(createdAt)}</div>
+        <div class="task-attachment-actions">
+          ${available
+            ? `<a href="${escAttr(attachment.download_url)}" target="_blank" rel="noopener noreferrer" class="wz-btn-ghost" style="padding:4px 10px;font-size:11px;"><i class="fa-solid fa-download"></i> Download</a>`
+            : `<span style="font-size:11px;color:#ef4444;"><i class="fa-solid fa-triangle-exclamation"></i> Arquivo indisponível</span>`
+          }
+        </div>
       </div>
       <button type="button" class="icon-btn task-attachment-delete" data-attachment-id="${esc(attachment.id)}" title="Excluir anexo"><i class="fa-solid fa-trash"></i></button>
     </div>
   `
+}
+
+function openLightbox(src, alt) {
+  const existing = document.getElementById("kbLightbox")
+  if (existing) existing.remove()
+
+  const overlay = document.createElement("div")
+  overlay.id = "kbLightbox"
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;backdrop-filter:blur(4px);"
+  overlay.innerHTML = `<img src="${escAttr(src)}" alt="${escAttr(alt || "")}" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:10px;box-shadow:0 8px 48px rgba(0,0,0,.6);" />`
+  overlay.addEventListener("click", () => overlay.remove())
+  document.body.appendChild(overlay)
 }
 
 function renderTaskRegisterPanel() {
@@ -1198,6 +1380,10 @@ function wireTaskModalInteractions() {
 
   document.querySelectorAll("[data-attachment-id]").forEach((button) => {
     button.addEventListener("click", () => deleteAttachment(button.dataset.attachmentId))
+  })
+
+  document.querySelectorAll("[data-lightbox]").forEach((el) => {
+    el.addEventListener("click", () => openLightbox(el.dataset.lightbox, el.dataset.lightboxAlt))
   })
 }
 
@@ -1322,45 +1508,52 @@ async function confirmAttachmentUpload() {
 }
 
 async function uploadWorkOrderAttachment(workOrderId, pendingAttachment, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open("POST", `${getApiBase()}/work-orders/${workOrderId}/attachments`)
+  const file = pendingAttachment.file
+  const fileName = file.name
+  const contentType = file.type || "application/octet-stream"
 
-    const headers = apiUserHeaders()
-    Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value))
-
-    xhr.upload.addEventListener("progress", (event) => {
-      if (!event.lengthComputable) return
-      const progress = Math.round((event.loaded / event.total) * 100)
-      onProgress(progress)
-    })
-
-    xhr.onload = () => {
-      const ok = xhr.status >= 200 && xhr.status < 300
-      if (!ok) {
-        let message = `HTTP ${xhr.status}`
-        try {
-          const parsed = JSON.parse(xhr.responseText || "{}")
-          message = parsed.error || parsed.message || message
-        } catch (_error) {}
-        reject(new Error(message))
-        return
-      }
-
-      try {
-        resolve(xhr.responseText ? JSON.parse(xhr.responseText) : null)
-      } catch (_error) {
-        resolve(null)
-      }
-    }
-
-    xhr.onerror = () => reject(new Error("Falha de rede durante o upload"))
-
-    const formData = new FormData()
-    formData.append("file", pendingAttachment.file)
-    formData.append("note", pendingAttachment.note || "")
-    xhr.send(formData)
+  // Passo 1: pedir presigned URL
+  const presignData = await apiJson(`/work-orders/${workOrderId}/attachments/presign`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_name: fileName, content_type: contentType })
   })
+
+  const uploadUrl = presignData.upload_url
+  const s3Key = presignData.s3_key
+
+  // Passo 2: PUT direto no S3 via XHR (para ter progresso)
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open("PUT", uploadUrl)
+    xhr.setRequestHeader("Content-Type", contentType)
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 90))
+    })
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`S3 upload falhou: ${xhr.status}`))
+    xhr.onerror = () => reject(new Error("Falha de rede no upload S3"))
+    xhr.send(file)
+  })
+
+  onProgress(95)
+
+  // Passo 3: registrar no banco
+  await apiJson(`/work-orders/${workOrderId}/attachments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      file_url: s3Key,
+      file_name: fileName,
+      content_type: contentType,
+      file_size_bytes: file.size,
+      note: pendingAttachment.note || ""
+    })
+  })
+
+  onProgress(100)
 }
 
 async function loadTaskAttachments(task) {
@@ -1421,6 +1614,39 @@ function bindFab() {
   document.getElementById("kbFab")?.addEventListener("click", openWizard)
 }
 
+function renderWizardAttachmentList() {
+  const list = document.getElementById("wzAttachmentList")
+  if (!list) return
+  const attachments = KB.wizardPendingAttachments
+  if (!attachments.length) {
+    list.innerHTML = ""
+    return
+  }
+  list.innerHTML = attachments
+    .map(
+      (att, i) => `
+      <div class="wz-attachment-item">
+        <i class="fa-solid fa-paperclip"></i>
+        <span class="wz-att-name">${esc(att.name)}</span>
+        <span class="wz-att-size">${formatFileSize(att.size)}</span>
+        <button type="button" class="wz-att-remove" data-idx="${i}" title="Remover"><i class="fa-solid fa-xmark"></i></button>
+      </div>`
+    )
+    .join("")
+  list.querySelectorAll(".wz-att-remove").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      KB.wizardPendingAttachments.splice(Number(btn.dataset.idx), 1)
+      renderWizardAttachmentList()
+    })
+  })
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function bindWizard() {
   document.getElementById("wzCloseBtn")?.addEventListener("click", closeWizard)
   document.getElementById("wzCancelBtn")?.addEventListener("click", closeWizard)
@@ -1450,11 +1676,34 @@ function bindWizard() {
 
   document.getElementById("addSubtaskBtn")?.addEventListener("click", addSubtask)
   document.getElementById("addResourceBtn")?.addEventListener("click", addResource)
+
+  document.getElementById("wzAttachmentAddBtn")?.addEventListener("click", () => {
+    document.getElementById("wzAttachmentsInput")?.click()
+  })
+  document.getElementById("wzAttachmentsInput")?.addEventListener("change", (e) => {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ""
+    files.forEach((file) => {
+      KB.wizardPendingAttachments.push({ file, name: file.name, size: file.size })
+    })
+    renderWizardAttachmentList()
+  })
 }
 
 function openWizard() {
   resetWizard()
   document.getElementById("wzOverlay")?.classList.remove("hidden")
+
+  const isAdmin = isSuperuser()
+  const radioGroupNormal = document.getElementById("radioGroupNormal")
+  const radioGroupDone = document.getElementById("radioGroupDone")
+  if (!isAdmin) {
+    if (radioGroupNormal) radioGroupNormal.style.display = "none"
+    if (radioGroupDone) radioGroupDone.style.display = "none"
+  } else {
+    if (radioGroupNormal) radioGroupNormal.style.display = ""
+    if (radioGroupDone) radioGroupDone.style.display = ""
+  }
 
   const now = new Date()
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
@@ -1473,6 +1722,7 @@ function resetWizard() {
   KB.selectedResponsavel = null
   KB.subtasks = []
   KB.resources = []
+  KB.wizardPendingAttachments = []
   KB.failedChecked = false
   KB.serviceChecked = false
   KB.alreadyDoneChecked = false
@@ -1636,7 +1886,9 @@ async function submitWizard() {
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Gerando...'
 
   let sendStatus
-  if (KB.alreadyDoneChecked) {
+  if (!isSuperuser()) {
+    sendStatus = "pendente"
+  } else if (KB.alreadyDoneChecked) {
     sendStatus = document.getElementById("sendToVerif")?.checked ? "em_verificacao" : "concluida"
   } else {
     sendStatus = document.getElementById("sendToPending")?.checked ? "pendente" : "em_processo"
@@ -1678,11 +1930,22 @@ async function submitWizard() {
   }
 
   try {
-    await apiJson("/work-orders", {
+    const created = await apiJson("/work-orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     })
+
+    const newWoId = created?.item?.id || created?.work_order?.id || created?.id
+    if (newWoId && KB.wizardPendingAttachments.length) {
+      for (const att of KB.wizardPendingAttachments) {
+        try {
+          await uploadWorkOrderAttachment(newWoId, { file: att.file, note: "" }, () => {})
+        } catch (err) {
+          console.warn("[WZ] anexo falhou:", att.name, err)
+        }
+      }
+    }
 
     closeWizard()
     showToast(STATUS_CREATE_TOAST[sendStatus] || "Uma nova OS foi gerada", "success")
@@ -2043,6 +2306,30 @@ function normalizeWorkOrderDetail(raw) {
   detail.status = detail.status || "pendente"
   detail.total_cost = toNumber(detail.total_cost ?? detail.cost_total ?? detail.cost ?? 0) || 0
   detail.responsavel_name = detail.responsavel_name || detail.assignee_name || detail.requested_by || ""
+  detail.task_type = raw.task_type || raw.task_type_name || ""
+  detail.classification_1 = raw.classification_1 || raw.classification_1_name || ""
+  detail.classification_2 = raw.classification_2 || raw.classification_2_name || ""
+  detail.criticality = raw.criticality || raw.criticality_name || "media"
+  detail.task_description = raw.task_description || raw.title || ""
+  detail.incident_date = raw.incident_date || raw.incident_at || null
+  detail.scheduled_date = raw.scheduled_date || raw.scheduled_start_at || null
+  detail.start_date = raw.start_date || raw.started_at || null
+  detail.end_date = raw.end_date || raw.finished_at || raw.closed_at || null
+  detail.closed_at = raw.closed_at || null
+  detail.observations = raw.observations || raw.observation || ""
+  detail.process_started_at = raw.process_started_at || detail.start_date || null
+  detail.elapsed_execution_seconds = toNumber(raw.elapsed_execution_seconds) ?? 0
+  detail._time_progress_synced_at = Date.now()
+  detail.requested_by = raw.requested_by || ""
+  detail.assignee_name = raw.assignee_name || raw.assigned_worker_name || raw.responsavel_name || ""
+  detail.estimated_duration_minutes = toNumber(raw.estimated_duration_minutes) ?? toNumber(raw.effective_estimated_duration_minutes)
+  detail.estimated_duration = raw.estimated_duration || formatMinutesToDuration(detail.estimated_duration_minutes) || ""
+  detail.progress_percent = raw.progress_percent ?? raw.progress ?? detail.progress ?? 0
+  detail.time_progress_percent = toNumber(raw.time_progress_percent) ?? 0
+  detail.asset_failed = !!(raw.asset_failed ?? raw.is_asset_failed)
+  detail.caused_interruption = !!raw.caused_interruption
+  detail.caused_interruption_duration = raw.caused_interruption_duration || formatMinutesToDuration(raw.interruption_duration_minutes) || ""
+  detail.failure_detection_method = raw.failure_detection_method || raw.detection_method || ""
   detail.subtasks = normalizeSubtasks(detail.subtasks)
   detail.resources = normalizeResources(detail.resources)
   detail.attachments = normalizeAttachments(rawAttachments)
@@ -2081,10 +2368,10 @@ function normalizeTask(rawTask, detail, index) {
     asset_location: task.asset_location || detail.asset_location || detail.plant_name || "",
     name: task.name || task.title || task.task_description || detail.task_description || `Tarefa ${index + 1}`,
     description: task.description || task.task_description || detail.task_description || "",
-    task_type: task.task_type || detail.task_type || "",
-    criticality: task.criticality || detail.criticality || "media",
-    classification_1: task.classification_1 || detail.classification_1 || "",
-    classification_2: task.classification_2 || detail.classification_2 || "",
+    task_type: task.task_type || task.task_type_name || detail.task_type || detail.task_type_name || "",
+    criticality: task.criticality || task.criticality_name || detail.criticality || detail.criticality_name || "media",
+    classification_1: task.classification_1 || task.classification_1_name || detail.classification_1 || detail.classification_1_name || "",
+    classification_2: task.classification_2 || task.classification_2_name || detail.classification_2 || detail.classification_2_name || "",
     request_number: task.request_number || detail.request_number || "",
     estimated_duration: task.estimated_duration || detail.estimated_duration || "",
     scheduled_date: task.scheduled_date || detail.scheduled_date || detail.incident_date || "",
@@ -2097,7 +2384,7 @@ function normalizeTask(rawTask, detail, index) {
     resources,
     attachments,
     attachmentsLoaded: Array.isArray(rawTaskAttachments) || !!detail.attachmentsLoaded,
-    progress: getProgressValue({ progress: task.progress, status, subtasks })
+    progress: getProgressValue({ progress_percent: task.progress_percent ?? task.progress, status, subtasks })
   }
 }
 
@@ -2143,14 +2430,17 @@ function normalizeAttachments(value) {
   return items
     .map((item, index) => {
       if (!item) return null
+      const fileName = item.name || item.filename || item.file_name || `Anexo ${index + 1}`
       return {
         id: item.id || item.attachment_id || `attachment-${index + 1}`,
-        name: item.name || item.filename || item.file_name || `Anexo ${index + 1}`,
+        name: fileName,
         note: item.note || item.description || "",
-        url: item.url || item.file_url || item.download_url || "",
-        thumbnail_url: item.thumbnail_url || item.preview_url || "",
-        preview_url: item.preview_url || "",
-        content_type: item.content_type || item.mime_type || guessMimeType(item.name || item.filename || ""),
+        url: item.download_url || item.url || item.file_url || "",
+        download_url: item.download_url || item.url || "",
+        is_available: item.is_available !== false && !!(item.download_url || item.url),
+        has_file: !!(item.file_url || item.download_url || item.url),
+        thumbnail_url: item.thumbnail_url || item.preview_url || (item.download_url && isImageMime(item.content_type || item.file_mime_type || "") ? item.download_url : ""),
+        content_type: item.content_type || item.file_mime_type || item.mime_type || guessMimeType(fileName),
         created_at: item.created_at || item.uploaded_at || item.date || ""
       }
     })
@@ -2214,10 +2504,11 @@ function syncPrimaryTaskToDetail(detail) {
   if (taskStatus === "concluida") detail.status = "concluida"
 
   detail.progress = getProgressValue({
-    progress: detail.progress,
+    progress: detail.progress_percent ?? detail.progress,
     status: detail.status,
     subtasks: primaryTask.subtasks
   })
+  detail.progress_percent = detail.progress
   return detail
 }
 
@@ -2232,19 +2523,26 @@ function buildWorkOrderPatchPayload(detail) {
     asset_id: detail.asset_id || null,
     asset_name: primaryTask.asset_name || detail.asset_name || null,
     asset_code: primaryTask.asset_code || detail.asset_code || null,
+    asset_type: detail.asset_type || null,
     asset_location: primaryTask.asset_location || detail.asset_location || null,
     plant_id: detail.plant_id || null,
     incident_date: detail.incident_date || null,
     requested_by: detail.requested_by || null,
     asset_failed: !!detail.asset_failed,
+    is_asset_failed: !!detail.asset_failed,
     failure_type: detail.failure_type || null,
     failure_cause: detail.failure_cause || null,
+    detection_method: detail.failure_detection_method || detail.detection_method || null,
     failure_detection_method: detail.failure_detection_method || null,
     failure_severity: detail.failure_severity || null,
     damage_type: detail.damage_type || null,
+    caused_interruption: !!detail.caused_interruption || durationToMinutes(detail.caused_interruption_duration) > 0,
+    interruption_duration_minutes: durationToMinutes(detail.caused_interruption_duration) || 0,
     caused_interruption_duration: detail.caused_interruption_duration || null,
     back_to_service: !!detail.back_to_service,
-    task_description: primaryTask.name || detail.task_description || null,
+    ...(primaryTask.name || detail.task_description
+        ? { task_description: primaryTask.name || detail.task_description }
+        : {}),
     observations: detail.observations || "",
     task_type: primaryTask.task_type || detail.task_type || null,
     classification_1: primaryTask.classification_1 || detail.classification_1 || null,
@@ -2259,6 +2557,7 @@ function buildWorkOrderPatchPayload(detail) {
     scheduled_date: detail.scheduled_date || null,
     start_date: detail.start_date || null,
     end_date: detail.end_date || null,
+    total_cost: detail.total_cost ?? null,
     subtasks: serializeSubtasks(primaryTask.subtasks || detail.subtasks),
     resources: serializeResources(primaryTask.resources || detail.resources),
     tasks: serializeTasks(detail.tasks || [])
@@ -2303,8 +2602,58 @@ function serializeResources(resources) {
   }))
 }
 
+function getProcessStartAt(wo) {
+  return wo.process_started_at || wo.started_at || wo.start_date || null
+}
+
+function getElapsedSeconds(wo) {
+  const rawElapsed = toNumber(wo?.elapsed_execution_seconds)
+  if (rawElapsed != null && ["em_processo", "em_verificacao"].includes(wo.status)) {
+    const syncedAt = toNumber(wo?._time_progress_synced_at) || Date.now()
+    const drift = Math.max(0, Math.round((Date.now() - syncedAt) / 1000))
+    return Math.max(0, Math.round(rawElapsed + drift))
+  }
+
+  const start = getProcessStartAt(wo)
+  if (!start || !["em_processo", "em_verificacao"].includes(wo.status)) return 0
+  const startTime = new Date(start).getTime()
+  if (Number.isNaN(startTime)) return 0
+  return Math.max(0, Math.round((Date.now() - startTime) / 1000))
+}
+
+function getTimeProgressPercent(wo) {
+  const raw = toNumber(wo?.time_progress_percent)
+  const mins = toNumber(wo?.estimated_duration_minutes) ?? toNumber(wo?.effective_estimated_duration_minutes) ?? durationToMinutes(wo?.estimated_duration)
+  if (!mins || mins <= 0) return raw != null ? clamp(Math.round(raw), 0, 100) : 0
+  const elapsed = getElapsedSeconds(wo) / 60
+  if (elapsed <= 0 && raw != null) return clamp(Math.round(raw), 0, 100)
+  return clamp(Math.round((elapsed / mins) * 100), 0, 100)
+}
+
+function getCardProgressValue(source) {
+  const status = source?.status || "pendente"
+  if (status === "concluida") return 100
+  if (status === "em_processo" || status === "em_verificacao") {
+    return getTimeProgressPercent(source)
+  }
+  return getProgressValue(source)
+}
+
+function formatElapsed(seconds) {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+}
+
 function getProgressValue(source) {
-  const raw = toNumber(source?.progress)
+  const status = normalizeTaskStatus(source?.status)
+
+  if (status === "nao_iniciada") return 0
+  if (status === "concluida") return 100
+
+  const raw = toNumber(source?.progress_percent ?? source?.progress)
   if (raw != null) return clamp(Math.round(raw), 0, 100)
 
   const subtasks = Array.isArray(source?.subtasks) ? source.subtasks : []
@@ -2313,10 +2662,6 @@ function getProgressValue(source) {
     return clamp(Math.round((completed / subtasks.length) * 100), 0, 100)
   }
 
-  const status = normalizeTaskStatus(source?.status)
-  if (status === "concluida") return 100
-  if (status === "em_verificacao") return 80
-  if (status === "em_andamento") return 45
   return 0
 }
 
@@ -2361,6 +2706,13 @@ function computeExecutionTime(task) {
     0
   )
   return totalLoggedMinutes > 0 ? minutesToHourLabel(totalLoggedMinutes) : "---"
+}
+
+function formatMinutesToDuration(minutes) {
+  if (!minutes && minutes !== 0) return ""
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return `${String(h).padStart(3, "0")}:${String(m).padStart(2, "0")}`
 }
 
 function formatDurationCompact(value) {
@@ -2574,6 +2926,10 @@ function safeLower(value) {
 
 function pickArray(value) {
   return Array.isArray(value) && value.length ? value : null
+}
+
+function isImageMime(mime) {
+  return String(mime || "").toLowerCase().startsWith("image/")
 }
 
 function isImageAttachment(attachment) {
